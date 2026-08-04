@@ -1,253 +1,107 @@
-const countdownElement = document.getElementById('countdown');
-const untilElement = document.getElementById('until');
-const currentElement = document.getElementById('current');
-const targetDateInput = document.getElementById('targetDate');
-const dateLabel = document.getElementById('dateLabel');
-const githubButton = document.getElementById('visitmygithub');
+const $ = id => document.getElementById(id);
+const [elCd, elUntil, elCurr, elTarget, elLabel, elGit, themeTgl, langSel, btnPause, btnReset, lblPause, lblReset, pBar, elEvt] =
+    ['countdown', 'until', 'current', 'targetDate', 'dateLabel', 'visitmygithub', 'themeToggle', 'langSelect', 'pauseBtn', 'resetBtn', 'pauseLabel', 'resetLabel', 'progressBar', 'eventTitleInput'].map($);
 
-const defaultDate = new Date('2027-01-01T00:00:00');
-const githubLink = 'https://github.com/SanityGuy';
-
-const TRANSLATIONS = {
-    en: {
-        title: 'Countdown Timer',
-        dateLabel: 'Enter target date and time:',
-        finished: 'Countdown Finished!',
-        loading: 'Loading...',
-        currentDate: (date, time) => `Current Date: ${date}, Time: ${time}`,
-        until: (date, time) => `until ${date}, Time: ${time}`,
-        githubLabel: 'GitHub',
-    },
-    ru: {
-        title: 'Таймер обратного отсчёта',
-        dateLabel: 'Введите дату и время:',
-        finished: 'Отсчёт завершён!',
-        loading: 'Загрузка...',
-        currentDate: (date, time) => `Текущая дата: ${date}, Время: ${time}`,
-        until: (date, time) => `до ${date}, Время: ${time}`,
-        githubLabel: 'ГитХаб',
-    },
-    id: {
-        title: 'Penghitung Mundur',
-        dateLabel: 'Masukkan tanggal dan waktu target:',
-        finished: 'Hitung mundur selesai!',
-        loading: 'Memuat...',
-        currentDate: (date, time) => `Tanggal Sekarang: ${date}, Pukul: ${time}`,
-        until: (date, time) => `sampai ${date}, Pukul: ${time}`,
-        githubLabel: 'Github',
-    },
+const defDate = new Date(Date.now() + 864e5 * 7);
+const TRANS = {
+    en: { t: 'Countdown Timer', d: 'Enter target date and time:', f: 'Finished!', p: 'Pause', r: 'Resume', rs: 'Reset', cur: (d, t) => `Current Date: ${d}, Time: ${t}`, unt: (d, t) => `until ${d}, Time: ${t}`, git: 'GitHub' },
+    ru: { t: 'Таймер отсчёта', d: 'Введите дату и время:', f: 'Завершён!', p: 'Пауза', r: 'Продолжить', rs: 'Сброс', cur: (d, t) => `Текущая дата: ${d}, Время: ${t}`, unt: (d, t) => `до ${d}, Время: ${t}`, git: 'ГитХаб' },
+    id: { t: 'Penghitung Mundur', d: 'Masukkan tanggal target:', f: 'Selesai!', p: 'Jeda', r: 'Lanjut', rs: 'Atur Ulang', cur: (d, t) => `Tanggal: ${d}, Pukul: ${t}`, unt: (d, t) => `sampai ${d}, Pukul: ${t}`, git: 'Github' }
 };
 
-const COLORS = {
-    theme: {
-        background: '#ffffff',
-        text: '#ffffff',
-        shadow: '0 0 25px rgb(125, 25, 255)',
-    },
-    warning: {
-        text: '#ffc061',
-        shadow: '0 0 25px rgb(255, 231, 97)',
-    },
-    danger: {
-        text: '#ff4646',
-        shadow: '0 0 25px rgb(255, 64, 64)',
-    },
+const UNITS = [{ l: "w", ms: 6048e5 }, { l: "d", ms: 864e5 }, { l: "h", ms: 36e5 }, { l: "min", ms: 6e4 }, { l: "s", ms: 1e3 }];
+let cL = localStorage.getItem('lang') || 'en', cT = localStorage.getItem('theme') || 'dark';
+let isPsd = false, isConf = false, fInst = null, iDiff = 0, pRem = 0;
+
+function pad(n, s) { return String(n).padStart(2, '0') + s; }
+function getT() { return TRANS[cL] || TRANS.en; }
+function getTgt() { return elTarget.value ? new Date(elTarget.value) : defDate; }
+function getDiff(d) { return isPsd ? pRem : d - new Date(); }
+
+function applyTheme(t) {
+    cT = t; localStorage.setItem('theme', t);
+    document.documentElement.setAttribute('data-theme', t);
+    themeTgl.innerHTML = `<i class="fa-solid fa-${t === 'dark' ? 'moon' : 'sun'}"></i>`;
 }
 
-const THRESHOLD = {
-    zero: 0,
-    tenSeconds: 10_000,
-    oneMinute: 60_000,
+function updUntil(d) {
+    if (d) elUntil.textContent = getT().unt(d.toLocaleDateString(), d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 }
 
-const FIXED_UNITS = [
-    { label: "w", ms: 1000 * 60 * 60 * 24 * 7 },
-    { label: "d", ms: 1000 * 60 * 60 * 24 },
-    { label: "h", ms: 1000 * 60 * 60 },
-    { label: "min", ms: 1000 * 60 },
-    { label: "s", ms: 1000 }
-]
+function fmtTime(diff, from) {
+    if (diff <= 0) return "0s";
+    const to = new Date(from.getTime() + diff);
+    let y = to.getFullYear() - from.getFullYear(), m = to.getMonth() - from.getMonth();
+    if (m < 0) { y--; m += 12; }
+    const ref = new Date(from); ref.setFullYear(ref.getFullYear() + y); ref.setMonth(ref.getMonth() + m);
+    if (ref > to) { m--; if (m < 0) { y--; m = 11; } ref.setMonth(ref.getMonth() - 1); }
+    const pts = [];
+    if (y) pts.push(pad(y, "y")); if (m) pts.push(pad(m, "m"));
+    let rem = to - ref;
+    for (let { l, ms } of UNITS) {
+        const c = Math.floor(rem / ms);
+        if (c > 0 || pts.length > 0) { pts.push(pad(c, l)); rem %= ms; }
+    }
+    return pts.join(" ") || "0s";
+}
 
-let currentLang = localStorage.getItem('lang') || 'en';
-let confettiTriggered = false;
+function updCd() {
+    const tgt = getTgt(), diff = getDiff(tgt), t = getT(), now = new Date();
+    elCurr.textContent = t.cur(now.toLocaleDateString(), now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    if (diff <= 0) {
+        elCd.textContent = t.f; document.title = `${t.f} - ${elEvt.value || 'Countdown'}`;
+        elCd.style.color = '#ff4646'; elCd.style.textShadow = '0 0 25px rgb(255, 64, 64)'; pBar.style.width = '100%';
+        if (!isConf) { isConf = true; confetti(); }
+    } else {
+        const fmt = fmtTime(diff, now);
+        elCd.textContent = fmt; document.title = `${fmt} - ${elEvt.value || 'Countdown'}`;
+        elCd.style.color = diff <= 1e4 ? '#ff4646' : diff <= 6e4 ? '#ffc061' : 'var(--text-primary)';
+        elCd.style.textShadow = diff <= 1e4 ? '0 0 25px rgb(255, 64, 64)' : diff <= 6e4 ? '0 0 25px rgb(255, 231, 97)' : '0 0 25px var(--glow-shadow)';
+        pBar.style.width = iDiff > 0 ? `${Math.min(100, Math.max(0, ((iDiff - diff) / iDiff) * 100))}%` : '0%';
+    }
+}
+
+function setTgt(d) { isConf = false; iDiff = d - Date.now(); updUntil(d); updCd(); }
+
+function applyLang(l) {
+    if (!TRANS[l]) return;
+    cL = l; localStorage.setItem('lang', l); document.documentElement.lang = l;
+    const t = getT();
+    $('title').textContent = t.t; elLabel.textContent = t.d; $('githubLabel').textContent = t.git;
+    lblPause.textContent = isPsd ? t.r : t.p; lblReset.textContent = t.rs; langSel.value = l;
+    updCd();
+}
 
 if (typeof flatpickr !== 'undefined') {
-    flatpickr(targetDateInput, {
-        enableTime: true,
-        time_24hr: true,
-        dateFormat: "Y-m-d H:i",
-        defaultDate: targetDateInput.value ? targetDateInput.value : defaultDate,
-
-        onReady(selectedDates) {
-            if (selectedDates[0]) updateUntil(selectedDates[0]);
-        },
-
-        onChange(selectedDates) {
-            if (selectedDates[0]) updateUntil(selectedDates[0]);
-        }
+    fInst = flatpickr(elTarget, {
+        enableTime: true, time_24hr: true, dateFormat: "Y-m-d H:i", defaultDate: elTarget.value || defDate,
+        onReady: d => d[0] && setTgt(d[0]), onChange: d => d[0] && setTgt(d[0])
     });
-} else {
-    console.error("flatpickr is not defined. Please ensure that the flatpickr library is included in your HTML.");
 }
 
-dateLabel.textContent = `Enter target date and time:`;
-githubButton.innerHTML = `<a href="${githubLink}" target="_blank"><i class="fa-brands fa-github"></i> ${getLangStrings().githubLabel}</a>`
+themeTgl.onclick = () => applyTheme(cT === 'dark' ? 'light' : 'dark');
+langSel.onchange = e => applyLang(e.target.value);
 
-const pad = (num, suffix) => String(num).padStart(2, '0') + suffix;
-
-function applyLang(lang) {
-    const t = TRANSLATIONS[lang];
-    if (!t) return;
-
-    currentLang = lang;
-    localStorage.setItem('lang', lang);
-    document.documentElement.lang = lang;
-
-    const titleEl = document.getElementById('title');
-    const dateLabelEl = document.getElementById('dateLabel');
-    const githubLabelEl = document.getElementById('githubLabel');
-
-    if (titleEl) titleEl.textContent = t.title;
-    if (dateLabelEl) dateLabelEl.textContent = t.dateLabel;
-    if (githubLabelEl) githubLabelEl.textContent = t.githubLabel;
-
-    document.querySelectorAll('.lang-btn').forEach(btn => {
-        const isActive = btn.dataset.lang === lang;
-        btn.classList.toggle('active', isActive);
-        btn.setAttribute('aria-pressed', String(isActive));
-    });
-
-    updateCountdown();
-}
-
-function getLangStrings() {
-    return TRANSLATIONS[currentLang] || TRANSLATIONS.en;
-}
-
-function extractCalendarUnits(startDate, endDate) {
-    let years = endDate.getFullYear() - startDate.getFullYear();
-    let months = endDate.getMonth() - startDate.getMonth();
-
-    if (months < 0) {
-        years--;
-        months += 12;
+btnPause.onclick = () => {
+    if (isPsd) {
+        const nt = new Date(Date.now() + pRem);
+        fInst ? fInst.setDate(nt) : elTarget.value = nt.toISOString().slice(0, 16);
+        isPsd = false; lblPause.textContent = getT().p; btnPause.innerHTML = `<i class="fa-solid fa-pause"></i> <span id="pauseLabel">${getT().p}</span>`;
+    } else {
+        pRem = getDiff(getTgt()); isPsd = true;
+        lblPause.textContent = getT().r; btnPause.innerHTML = `<i class="fa-solid fa-play"></i> <span id="pauseLabel">${getT().r}</span>`;
     }
+};
 
-    const reference = new Date(startDate);
-    reference.setFullYear(reference.getFullYear() + years);
-    reference.setMonth(reference.getMonth() + months);
+btnReset.onclick = () => {
+    isPsd = false; lblPause.textContent = getT().p; btnPause.innerHTML = `<i class="fa-solid fa-pause"></i> <span id="pauseLabel">${getT().p}</span>`;
+    fInst && fInst.setDate(defDate); setTgt(defDate);
+};
 
-    if (reference > endDate) {
-        months--;
-        if (months < 0) {
-            years--;
-            months = 11;
-        }
-        reference.setMonth(reference.getMonth() - 1);
-    }
-
-    const remainderMs = endDate - reference;
-    return { years, months, remainderMs };
-}
-
-function formatRemainingTime(timeDifference, fromDate) {
-    if (timeDifference <= THRESHOLD.zero) return "0s";
-
-    const toDate = new Date(fromDate.getTime() + timeDifference);
-    const { years, months, remainderMs } = extractCalendarUnits(fromDate, toDate);
-
-    const parts = [];
-    if (years) parts.push(pad(years, "y"));
-    if (months) parts.push(pad(months, "m"));
-
-    let remaining = remainderMs;
-    for (const { label, ms } of FIXED_UNITS) {
-        const count = Math.floor(remaining / ms);
-
-        if (count > 0 || parts.length > 0) {
-            parts.push(pad(count, label));
-            remaining %= ms;
-        }
-    }
-
-    return parts.join(" ") || "0s";
-}
-
-function getTargetDate() {
-    return targetDateInput.value ? new Date(targetDateInput.value) : defaultDate;
-}
-
-function calculateRemainingTime(targetDate) {
-    return targetDate - new Date();
-}
-
-function isFinished(timeDifference) {
-    return timeDifference <= THRESHOLD.zero;
-}
-
-function updateCountdownColor(timeDifference) {
-    let color;
-
-    if (timeDifference <= THRESHOLD.tenSeconds) color = COLORS.danger;
-    else if (timeDifference <= THRESHOLD.oneMinute) color = COLORS.warning;
-    else color = COLORS.theme;
-
-    countdownElement.style.color = color.text;
-    countdownElement.style.textShadow = color.shadow;
-}
-
-function updateCurrentTime(now) {
-    const t = getLangStrings();
-    const date = now.toLocaleDateString();
-    const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    currentElement.textContent = t.currentDate(date, time);
-}
-
-function updateUntil(targetDate) {
-    if (!targetDate) return;
-    const t = getLangStrings();
-    const date = targetDate.toLocaleDateString();
-    const time = targetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    untilElement.textContent = t.until(date, time);
-}
-
-function updateCountdownText(timeDifference) {
-    countdownElement.textContent = formatRemainingTime(timeDifference, new Date());
-    document.title = formatRemainingTime(timeDifference, new Date());
-}
-
-function showFinishedMessage(targetDate) {
-    countdownElement.textContent = getLangStrings().finished;
-    document.title = getLangStrings().finished;
-}
-
-function updateCountdown() {
-    const targetDate = getTargetDate();
-    const timeDifference = calculateRemainingTime(targetDate);
-
-    if (isFinished(timeDifference)) {
-        showFinishedMessage();
-        updateCountdownColor(timeDifference);
-
-        if (!confettiTriggered) {
-            confettiTriggered = true;
-            confetti();
-        }
-    }
-    else {
-        confettiTriggered = false;
-        updateUntil(targetDate);
-        updateCurrentTime(new Date());
-        updateCountdownColor(timeDifference);
-        updateCountdownText(timeDifference);
-    }
-}
-
-document.querySelectorAll('.lang-btn').forEach(btn => {
-    btn.addEventListener('click', () => applyLang(btn.dataset.lang));
+document.querySelectorAll('.preset-chip').forEach(c => c.onclick = () => {
+    const n = new Date(), tgt = c.dataset.ny ? new Date(n.getFullYear() + 1, 0, 1, 0, 0, 0) :
+        new Date(n.getTime() + (c.dataset.addHours ? c.dataset.addHours * 36e5 : c.dataset.addDays * 864e5));
+    fInst && fInst.setDate(tgt); setTgt(tgt);
 });
 
-applyLang(currentLang);
-updateCountdown();
-setInterval(updateCountdown, 1000);
-console.log('COUNTDOWN TIMER HAS LOADED SUCCESSFULLY!');
+applyTheme(cT); applyLang(cL); updCd(); setInterval(updCd, 1000);
